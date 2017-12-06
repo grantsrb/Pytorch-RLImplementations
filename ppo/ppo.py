@@ -15,16 +15,16 @@ from utils import preprocess, discount, sum_one
 gamma = .99 # Discount factor
 lambda_ = .97 # GAE moving average factor
 clip_const = 0.2
-ep_batch_size = 1
-fit_batch_size = 128
+ep_batch_size = 2
+fit_batch_size = 256
 n_epochs = 10
-n_envs = 16 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
+n_envs = 20 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
-entropy_const = 0.01 # Scales the entropy portion of the loss function
+entropy_const = 0.05 # Scales the entropy portion of the loss function
 max_norm = 0.5 # Scales the gradients using their norm
 max_tsteps = 80e6 # The number of environmental steps to take before ending the algorithm
-lr = 1e-2/ep_batch_size/n_envs # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
+lr = 1e-3/ep_batch_size/n_envs # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
 
 net_save_file = "net_state_dict.p"
 optim_save_file = "optim_state_dict.p"
