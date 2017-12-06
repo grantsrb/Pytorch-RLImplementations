@@ -43,7 +43,7 @@ class Model(nn.Module):
         else:
             return 0, action
 
-    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, val_const=.5, entropy_const=0.01):
+    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5, val_const=.5, entropy_const=0.01):
         """
         Runs stochastic gradient descent on the collected data.
 
@@ -71,44 +71,60 @@ class Model(nn.Module):
         
         n_data_pts = len(actions)
         avg_loss = 0
+        avg_clip = 0
+        avg_val = 0
+        avg_entropy = 0
         for epoch in range(epochs):
             indices = torch.randperm(n_data_pts)
             running_loss = 0
+            running_clip = 0
+            running_val = 0
+            running_entropy = 0
             optimizer.zero_grad()
             for i in range(0,n_data_pts,batch_size):
                 idxs = indices[i:i+batch_size]
                 batch_acts = actions[idxs]
                 batch_obs = observs[idxs]
                 batch_rs = rewards[idxs]
-                batch_opis = old_pis[idxs]
+                batch_old_pis = old_pis[idxs]
                 batch_advs = advantages[idxs]
                 
                 values, raw_actions = self.forward(batch_obs)
-                logprobs = self.logsoftmax(raw_actions)
-                action_logs = logprobs[torch.arange(0,logprobs.size()[0]).long(), batch_acts]
-                ratios = action_logs/batch_opis
+                probs = self.softmax(raw_actions)
+                new_pis = probs[torch.arange(0,probs.size()[0]).long(), batch_acts]
+                ratios = new_pis/batch_old_pis
                 clipped_ratios = torch.clamp(ratios, 1-clip_const, 1+clip_const)
                 clip_loss = -torch.mean(torch.min(ratios*batch_advs, clipped_ratios*batch_advs))
 
                 val_loss = val_const*self.mseloss(values.squeeze(), batch_rs)
 
-                probs = self.softmax(raw_actions)
-                entropy_loss = entropy_const*torch.mean(probs*logprobs)
+                logprobs = self.logsoftmax(raw_actions)
+                entropy_loss = -entropy_const*torch.mean(probs*logprobs)
 
-                loss = clip_loss + val_loss + entropy_loss
+                loss = clip_loss + val_loss - entropy_loss
                 running_loss += loss.data[0]
+                running_clip += clip_loss.data[0]
+                running_val += val_loss.data[0]
+                running_entropy += entropy_loss.data[0]
 
                 loss.backward()
 
+            norm = nn.utils.clip_grad_norm(self.parameters(), max_norm)
             optimizer.step()
             avg_loss += running_loss/n_data_pts
+            avg_clip += running_clip/n_data_pts
+            avg_val += running_val/n_data_pts
+            avg_entropy += running_entropy/n_data_pts
 
-        print("Update Avg Loss",avg_loss/epochs)
+        print("Loss",avg_loss/epochs,"– Clip:",avg_clip/epochs,"– Val:",avg_val/epochs,"– Entr:",avg_entropy/epochs)
         
         # Update old_pis
+        new_actions, new_observs, _, _, _ = new_data
+        actions = torch.LongTensor(new_actions)
+        observs = Variable(torch.from_numpy(np.asarray(new_observs)).float())
         values, raw_outputs = self.forward(observs)
-        logprobs = self.logsoftmax(raw_outputs)
-        old_pis = logprobs[torch.arange(0,logprobs.size()[0]).long(), actions]
+        probs = self.softmax(raw_outputs)
+        old_pis = probs[torch.arange(0,probs.size()[0]).long(), actions]
         self.old_data = [new_data[i] for i in range(len(new_data))]
         self.old_data[3] = old_pis.data.tolist()
 
