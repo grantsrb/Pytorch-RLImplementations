@@ -11,7 +11,7 @@ Description: A simple model based loosely off of Andrej Karpathy's model in his 
 """
 
 class Model(nn.Module):
-    def __init__(self, input_dim, action_dim):
+    def __init__(self, input_dim, action_dim, n_olddatas=3):
         super(Model, self).__init__()
         self.hidden_dim = action_dim*100
 
@@ -29,7 +29,8 @@ class Model(nn.Module):
         self.softmax = nn.Softmax()
         self.mseloss = nn.MSELoss()
 
-        self.old_datas = [[],[],[]]
+        self.old_datas = [[]]*n_olddatas
+        self.n_olddatas = n_olddatas
         self.data_idx = 0
 
     def forward(self, x, requires_value=True, dropout=False, bnorm=False):
@@ -45,7 +46,7 @@ class Model(nn.Module):
         else:
             return 0, action
 
-    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5, val_const=.5, entropy_const=0.01, gamma=0.99, lambda_=0.97, n_keepdatas=3):
+    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5, val_const=.5, entropy_const=0.01, gamma=0.99, lambda_=0.97):
         """
         Runs stochastic gradient descent on the collected data.
 
@@ -59,6 +60,8 @@ class Model(nn.Module):
             data = [*new_data]
             for od in self.old_datas:
                 for i,d in enumerate(od):
+                    assert type(d) == type([])
+                    assert type(data[i]) == type([])
                     data[i] = data[i] + d
 
         actions, observs, rewards, old_pis, advantages, mask = data
@@ -95,7 +98,7 @@ class Model(nn.Module):
                 probs = self.softmax(raw_actions)
                 new_pis = probs[torch.arange(0,probs.size()[0]).long(), batch_acts]
                 ratios = new_pis/batch_old_pis
-                clipped_ratios = torch.clamp(ratios, 1-clip_const, 1+clip_const)
+                clipped_ratios = torch.clamp(ratios, 1.0-clip_const, 1.0+clip_const)
                 clip_loss = -torch.mean(torch.min(ratios*batch_advs, clipped_ratios*batch_advs))
 
                 val_loss = val_const*self.mseloss(values.squeeze(), batch_rs)
@@ -123,7 +126,7 @@ class Model(nn.Module):
         
         # Update old_pis
         self.old_datas[self.data_idx] = new_data
-        self.data_idx = (self.data_idx + 1) % n_keepdatas
+        self.data_idx = (self.data_idx + 1) % self.n_olddatas
         for i,od in enumerate(self.old_datas):
             if od != []:
                 actions, observs, rewards, old_pis, advantages, mask = od
@@ -135,8 +138,8 @@ class Model(nn.Module):
                 old_pis = probs[torch.arange(0,probs.size()[0]).long(), actions]
 
                 values = values.data.squeeze().tolist()
-                advantages = utils.gae(rewards, values, mask, gamma, lambda_)
-                self.old_datas[i] = [od[0], od[1], od[2], old_pis.data.tolist(), advantages, mask]
+                advantages, rewards = utils.gae(rewards, values, mask, gamma, lambda_)
+                self.old_datas[i] = [od[0], od[1], rewards, old_pis.data.tolist(), advantages, mask]
 
                 
     def check_grads(self):

@@ -15,9 +15,10 @@ from utils import preprocess, discount, sum_one
 gamma = .99 # Discount factor
 lambda_ = .97 # GAE moving average factor
 clip_const = 0.2
-ep_batch_size = 1
+ep_batch_size = 2
 fit_batch_size = 256
-n_epochs = 10
+n_olddatas = 5
+n_epochs = 5
 n_envs = 20 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
@@ -47,7 +48,7 @@ prev_bookmarks = [0 for i in range(n_envs)]
 # Make model and optimizer
 action_dim = 2 # Pong specific number of possible actions
 prepped_state = preprocess(obs_bookmarks[0]) # Returns a vector representation of the observation
-net = model.Model(prepped_state.shape[0], action_dim) 
+net = model.Model(prepped_state.shape[0], action_dim, n_olddatas=n_olddatas) 
 optimizer = optim.Adam(net.parameters(), lr=lr)
 
 if resume:
@@ -115,8 +116,8 @@ while T < max_tsteps:
                 if done or t==n_tsteps-1 or rewards[-1] != 0: # Reached end of rollout for this episode
 
                     if rewards[-1] == 0: # Did not reach a terminal state (pong specific)
-                        advantages.append(0) # use bootstrapped reward equivalent to V(t)-V(t)
-                        rewards[-1] = old_value # Set bootstrapped reward to fit critic later
+                        advantages.append(0) # use bootstrapped advantage (equivalent to V(t)-V(t))
+                        rewards[-1] = old_value # Set bootstrapped reward for fitting critic later
 
                     else: # Reached terminal state (pong specific)
                         advantages.append(rewards[-1]-old_value) 
@@ -147,7 +148,7 @@ while T < max_tsteps:
     advantages = discount(advantages, gamma*lambda_, mask) # Generalized Value Estimation
 
     data = [actions, observs, rewards, old_pis, advantages, mask]
-    net.fit_policy(data, optimizer, epochs=n_epochs, clip_const=clip_const, batch_size=fit_batch_size, entropy_const=entropy_const, val_const=val_const, gamma=gamma, lambda_=lambda_)
+    net.fit_policy(data, optimizer, epochs=n_epochs, clip_const=clip_const, batch_size=fit_batch_size, entropy_const=entropy_const, val_const=val_const, gamma=gamma, lambda_=lambda_) 
 
     if episode % (ep_batch_size*5) == 0:
         torch.save(net.state_dict(), net_save_file)
@@ -160,7 +161,6 @@ while T < max_tsteps:
     
     episode_reward = 0
     actions, observs, rewards, old_pis, advantages, mask = [], [], [], [], [], []
-    old_value = 0
     net.train(mode=False)
 
 
