@@ -53,5 +53,5 @@ def gae(rewards, values, mask, gamma, lambda_):
         else:
             running_sum = gamma*lambda_*running_sum + (rewards[i]+gamma*values[i+1]-values[i])
         advantages[i] = running_sum
-    return advantages
+    return advantages, rewards
     
