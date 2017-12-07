@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
 import os
+import utils
 
 """
 Description: A simple model based loosely off of Andrej Karpathy's model in his reinforcement learning blog post.
@@ -43,7 +44,7 @@ class Model(nn.Module):
         else:
             return 0, action
 
-    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5, val_const=.5, entropy_const=0.01):
+    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5, val_const=.5, entropy_const=0.01, gamma=0.99, lambda_=0.97):
         """
         Runs stochastic gradient descent on the collected data.
 
@@ -60,10 +61,11 @@ class Model(nn.Module):
                 assert type(n) == type([])
                 data.append(o+n)
 
-        actions, observs, rewards, old_pis, advantages = data
+        actions, observs, rewards, old_pis, advantages, mask = data
 
         actions = torch.LongTensor(actions)
         observs = Variable(torch.from_numpy(np.asarray(observs)).float())
+        rewards = utils.discount(rewards, gamma, mask)
         rewards = Variable(torch.FloatTensor(rewards))
         old_pis = Variable(torch.FloatTensor(old_pis))
         old_pis = torch.clamp(old_pis, 1e-4, 1)
@@ -111,6 +113,7 @@ class Model(nn.Module):
                 norm = nn.utils.clip_grad_norm(self.parameters(), max_norm)
                 optimizer.step()
 
+            self.check_grads()
             avg_loss += running_loss/n_data_pts
             avg_clip += running_clip/n_data_pts
             avg_val += running_val/n_data_pts
@@ -119,14 +122,17 @@ class Model(nn.Module):
         print("Loss",avg_loss/epochs,"– Clip:",avg_clip/epochs,"– Val:",avg_val/epochs,"– Entr:",avg_entropy/epochs)
         
         # Update old_pis
-        new_actions, new_observs, _, _, _ = new_data
-        actions = torch.LongTensor(new_actions)
-        observs = Variable(torch.from_numpy(np.asarray(new_observs)).float())
+        actions, observs, rewards, old_pis, advantages, mask = new_data
+        actions = torch.LongTensor(actions)
+        observs = Variable(torch.from_numpy(np.asarray(observs)).float())
         values, raw_outputs = self.forward(observs)
+
         probs = self.softmax(raw_outputs)
         old_pis = probs[torch.arange(0,probs.size()[0]).long(), actions]
-        self.old_data = [new_data[i] for i in range(len(new_data))]
-        self.old_data[3] = old_pis.data.tolist()
+
+        values = values.data.squeeze().tolist()
+        advantages = utils.gae(rewards, values, mask, gamma, lambda_)
+        self.old_data = [new_data[0], new_data[1], new_data[2], old_pis.data.tolist(), advantages, mask]
 
                 
     def check_grads(self):
