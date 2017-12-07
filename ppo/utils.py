@@ -45,8 +45,9 @@ def gae(rewards, values, mask, gamma, lambda_):
     running_sum = 0
     for i in range(len(rewards)):
         if mask[i] == 1:
-            if rewards[i] == 0:
+            if rewards[i] != 1:
                 running_sum = 0 # Bootstrap
+                rewards[i] = values[i]
             else:
                 running_sum = rewards[i]-values[i]
         else:
