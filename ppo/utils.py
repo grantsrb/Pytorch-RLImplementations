@@ -37,3 +37,20 @@ def sum_one(action_vec):
     new_vec[-1] = 1-running_sum
     return new_vec
     
+def gae(rewards, values, mask, gamma, lambda_):
+    """
+    Calculates gae advantages using the provided rewards and values
+    """
+    advantages = [0]*len(rewards)
+    running_sum = 0
+    for i in range(len(rewards)):
+        if mask[i] == 1:
+            if rewards[i] == 0:
+                running_sum = 0 # Bootstrap
+            else:
+                running_sum = rewards[i]-values[i]
+        else:
+            running_sum = gamma*lambda_*running_sum + (rewards[i]+gamma*values[i+1]-values[i])
+        advantages[i] = running_sum
+    return advantages
+    
