@@ -15,13 +15,13 @@ from utils import preprocess, discount, sum_one
 gamma = .99 # Discount factor
 lambda_ = .97 # GAE moving average factor
 clip_const = 0.2
-ep_batch_size = 2
+ep_batch_size = 1
 fit_batch_size = 256
 n_epochs = 10
 n_envs = 20 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
-entropy_const = 0.05 # Scales the entropy portion of the loss function
+entropy_const = 0.01 # Scales the entropy portion of the loss function
 max_norm = 0.5 # Scales the gradients using their norm
 max_tsteps = 80e6 # The number of environmental steps to take before ending the algorithm
 lr = 1e-3/ep_batch_size/n_envs # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
@@ -144,20 +144,19 @@ while T < max_tsteps:
     net.train(mode=True)
     print("T="+str(T),"– Episode", episode, "–– Avg Reward:", avg_reward, "–– Avg Action:", np.mean(actions))
 
-    rewards = discount(rewards, gamma, mask) # Discount rewards
     advantages = discount(advantages, gamma*lambda_, mask) # Generalized Value Estimation
 
-    data = [actions, observs, rewards, old_pis, advantages]
-    net.fit_policy(data, optimizer, epochs=n_epochs, clip_const=clip_const, batch_size=fit_batch_size, entropy_const=entropy_const, val_const=val_const)
+    data = [actions, observs, rewards, old_pis, advantages, mask]
+    net.fit_policy(data, optimizer, epochs=n_epochs, clip_const=clip_const, batch_size=fit_batch_size, entropy_const=entropy_const, val_const=val_const, gamma=gamma, lambda_=lambda_)
 
     if episode % (ep_batch_size*5) == 0:
         torch.save(net.state_dict(), net_save_file)
         torch.save(optimizer.state_dict(), optim_save_file)
 
-        # Check for memory leaks
-        gc.collect()
-        max_mem_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        print("Memory Used: {:.2f} MB".format(max_mem_used / 1024))
+    # Check for memory leaks
+    gc.collect()
+    max_mem_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    print("Memory Used: {:.2f} MB".format(max_mem_used / 1024))
     
     episode_reward = 0
     actions, observs, rewards, old_pis, advantages, mask = [], [], [], [], [], []

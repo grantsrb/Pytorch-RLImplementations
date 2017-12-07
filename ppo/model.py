@@ -29,7 +29,8 @@ class Model(nn.Module):
         self.softmax = nn.Softmax()
         self.mseloss = nn.MSELoss()
 
-        self.old_data = None
+        self.old_datas = [[],[],[]]
+        self.data_idx = 0
 
     def forward(self, x, requires_value=True, dropout=False, bnorm=False):
         fx = F.relu(self.entry(x))
@@ -44,7 +45,7 @@ class Model(nn.Module):
         else:
             return 0, action
 
-    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5, val_const=.5, entropy_const=0.01, gamma=0.99, lambda_=0.97):
+    def fit_policy(self, new_data, optimizer, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5, val_const=.5, entropy_const=0.01, gamma=0.99, lambda_=0.97, n_keepdatas=3):
         """
         Runs stochastic gradient descent on the collected data.
 
@@ -52,14 +53,13 @@ class Model(nn.Module):
             actions, observations, discounted rewards, pi values, advantages
         """
         
-        if self.old_data == None:
+        if self.old_datas[0] == []:
             data = new_data
         else:
-            data = []
-            for o,n in zip(self.old_data,new_data):
-                assert type(o) == type([])
-                assert type(n) == type([])
-                data.append(o+n)
+            data = [*new_data]
+            for od in self.old_datas:
+                for i,d in enumerate(od):
+                    data[i] = data[i] + d
 
         actions, observs, rewards, old_pis, advantages, mask = data
 
@@ -122,17 +122,21 @@ class Model(nn.Module):
         print("Loss",avg_loss/epochs,"– Clip:",avg_clip/epochs,"– Val:",avg_val/epochs,"– Entr:",avg_entropy/epochs)
         
         # Update old_pis
-        actions, observs, rewards, old_pis, advantages, mask = new_data
-        actions = torch.LongTensor(actions)
-        observs = Variable(torch.from_numpy(np.asarray(observs)).float())
-        values, raw_outputs = self.forward(observs)
+        self.old_datas[self.data_idx] = new_data
+        self.data_idx = (self.data_idx + 1) % n_keepdatas
+        for i,od in enumerate(self.old_datas):
+            if od != []:
+                actions, observs, rewards, old_pis, advantages, mask = od
+                actions = torch.LongTensor(actions)
+                observs = Variable(torch.from_numpy(np.asarray(observs)).float())
+                values, raw_outputs = self.forward(observs)
 
-        probs = self.softmax(raw_outputs)
-        old_pis = probs[torch.arange(0,probs.size()[0]).long(), actions]
+                probs = self.softmax(raw_outputs)
+                old_pis = probs[torch.arange(0,probs.size()[0]).long(), actions]
 
-        values = values.data.squeeze().tolist()
-        advantages = utils.gae(rewards, values, mask, gamma, lambda_)
-        self.old_data = [new_data[0], new_data[1], new_data[2], old_pis.data.tolist(), advantages, mask]
+                values = values.data.squeeze().tolist()
+                advantages = utils.gae(rewards, values, mask, gamma, lambda_)
+                self.old_datas[i] = [od[0], od[1], od[2], old_pis.data.tolist(), advantages, mask]
 
                 
     def check_grads(self):
