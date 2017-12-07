@@ -80,8 +80,8 @@ class Model(nn.Module):
             running_clip = 0
             running_val = 0
             running_entropy = 0
-            optimizer.zero_grad()
             for i in range(0,n_data_pts,batch_size):
+                optimizer.zero_grad()
                 idxs = indices[i:i+batch_size]
                 batch_acts = actions[idxs]
                 batch_obs = observs[idxs]
@@ -108,9 +108,9 @@ class Model(nn.Module):
                 running_entropy += entropy_loss.data[0]
 
                 loss.backward()
+                norm = nn.utils.clip_grad_norm(self.parameters(), max_norm)
+                optimizer.step()
 
-            norm = nn.utils.clip_grad_norm(self.parameters(), max_norm)
-            optimizer.step()
             avg_loss += running_loss/n_data_pts
             avg_clip += running_clip/n_data_pts
             avg_val += running_val/n_data_pts
