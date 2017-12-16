@@ -53,16 +53,13 @@ class Fitter():
         actions = torch.LongTensor(actions)
         observs = Variable(torch.from_numpy(np.asarray(observs)).float())
 
-
-        advantages = np.asarray(advantages)
-        returns = advantages + np.asarray(old_vals)
-        returns = (returns - np.mean(returns))/(np.std(returns)+1e-7)
-        returns = Variable(torch.from_numpy(returns).float())
-        advantages = (advantages - np.mean(advantages))/(np.std(advantages)+1e-7)
-        advantages = Variable(torch.from_numpy(advantages).float())
         old_vals = Variable(torch.FloatTensor(old_vals))
-        old_pis = Variable(torch.FloatTensor(old_pis))
-        old_pis = torch.clamp(old_pis, 1e-7, 1)
+        advantages = Variable(torch.FloatTensor(advantages))
+        returns = Variable(advantages.data + old_vals.data)
+        #advantages = Variable((advantages-torch.mean(advantages))/(torch.std(advantages)+1e-7))
+
+        old_pis = torch.clamp(torch.FloatTensor(old_pis), 1e-7, 1)
+        old_pis = Variable(old_pis)
 
         n_data_pts = len(actions)
         n_loops = n_data_pts//batch_size

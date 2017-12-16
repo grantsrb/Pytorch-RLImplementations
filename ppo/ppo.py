@@ -14,19 +14,20 @@ import fitter
 
 # hyperparameters
 gamma = .99 # Discount factor
-lambda_ = .95 # GAE moving average factor
+lambda_ = .97 # GAE moving average factor
 clip_const = 0.2
-ep_batch_size = 1
+ep_batch_size = 3
 n_minibatches = 4
 n_olddatas = 5
 n_epochs = 4
 n_envs = 20 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
-n_tsteps = 5 # Maximum number of steps to take in an environment for one episode
+n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
 entropy_const = 0.01 # Scales the entropy portion of the loss function
-max_norm = 0.5 # Scales the gradients using their norm
+max_norm = 0.4 # Scales the gradients using their norm
 max_tsteps = 80e6 # The number of environmental steps to take before ending the algorithm
-lr = 1e-4 # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
+lr = 1e-4 
+rew_cutoff = -.9
 
 net_save_file = "net_state_dict.p"
 optim_save_file = "optim_state_dict.p"
@@ -118,13 +119,8 @@ while T < max_tsteps:
                 if done or t==n_tsteps-1 or rewards[-1] != 0: # Reached end of rollout for this episode
 
                     if rewards[-1] == 0: # Did not reach a terminal state (pong specific)
-                        bootobs = preprocess(observation)
-                        prepped_obs = bootobs-prev_obs # Gives some information about previous state
-                        prepped_obs = Variable(torch.from_numpy(prepped_obs).view(1,-1).float())
-                        value, raw_output = net.forward(prepped_obs)
-                        value = value.data.squeeze()[0]
-                        rewards[-1] = value # Set bootstrapped reward for fitting critic later
-                        advantages.append(gamma*value-old_vals[-1]) # use bootstrapped advantage
+                        rewards[-1] = old_vals[-1] # Set bootstrapped reward for fitting critic later
+                        advantages.append(0) # use bootstrapped advantage
 
                     else: # Reached terminal state (pong specific)
                         advantages.append(rewards[-1]-old_vals[-1])
@@ -150,6 +146,12 @@ while T < max_tsteps:
 
     net.train(mode=True)
     print("T="+str(T),"– Episode", episode, "–– Avg Reward:", avg_reward, "–– Avg Action:", np.mean(actions))
+
+    if reward_count > 100 and avg_reward > rew_cutoff:
+        rew_cutoff += 0.1
+        entropy_const *= .8
+        max_norm *= .8
+        clip_const *= .8
 
     advantages = discount(advantages, gamma*lambda_, mask) # Generalized Value Estimation
     fit_batch_size = len(advantages)//n_minibatches
