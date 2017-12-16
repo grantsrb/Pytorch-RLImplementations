@@ -25,7 +25,7 @@ lr = 1e-2/batch_size/n_envs # Divide by batchsize as a shortcut to averaging the
 net_save_file = "net_state_dict.p"
 optim_save_file = "optim_state_dict.p"
 
-resume = True
+resume = False
 render = False
 if len(sys.argv) > 1:
     resume = bool(sys.argv[1])
