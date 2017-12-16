@@ -61,7 +61,19 @@ prepped_obs = utils.preprocess(obs_bookmarks[0]) # Returns a vector representati
 prev_bookmarks = [np.zeros_like(prepped_obs) for i in range(n_envs)]
 obs = np.zeros((prepped_obs.shape[0]*2,)+prepped_obs.shape[1:],dtype=np.float32)
 
+# Various functions that will be useful later
+logsoftmax = nn.LogSoftmax()
+softmax = nn.Softmax()
+mseloss = nn.MSELoss()
+
+# Creat model and optimizer
 net = model.Model(obs.shape, action_dim) 
+if torch.cuda.is_available():
+    net = net.cuda()
+    torch.FloatTensor = torch.cuda.FloatTensor
+    logsoftmax = logsoftmax.cuda()
+    softmax = softmax.cuda()
+    mseloss = mseloss.cuda()
 optimizer = optim.Adam(net.parameters(), lr=lr)
 
 if resume:
@@ -74,10 +86,6 @@ else:
 
 optimizer.zero_grad()
 
-# Various functions that will be useful later
-logsoftmax = nn.LogSoftmax()
-softmax = nn.Softmax()
-mseloss = nn.MSELoss()
 
 # Store actions, observations, values
 actions, observs, rewards, values, advantages, mask, concepts, conc_preds = [], [], [], [], [], [], [], []
@@ -108,10 +116,10 @@ while T < max_tsteps:
             observation = utils.preprocess(observation)
             prepped_obs = np.concatenate([observation, prev_obs], axis=0)
             prev_obs = observation
-            observs.append(prepped_obs) # Observations will be used later
+            observs.append(prepped_obs.tolist()) # Observations will be used later
 
             # Take action
-            prepped_obs = torch.from_numpy(prepped_obs).float().unsqueeze(0)
+            prepped_obs = torch.FloatTensor(prepped_obs.tolist()).unsqueeze(0)
             t_state = Variable(prepped_obs)
             value, raw_output, concept, conc_pred = net.forward(t_state, batch_norm=batch_norm)
             action_pred = softmax(raw_output)
@@ -173,7 +181,7 @@ while T < max_tsteps:
     rewards = utils.discount(rewards, gamma, mask) # Discount rewards
     t_rewards = Variable(torch.FloatTensor(rewards))
 
-    t_observs = Variable(torch.from_numpy(np.asarray(observs)).float())
+    t_observs = Variable(torch.FloatTensor(observs))
     values, raw_actions, _, conc_preds = net.forward(t_observs, batch_norm=batch_norm)
     conc_preds = conc_preds.view(conc_preds.size(0),-1)
     softlogs = logsoftmax(raw_actions)
@@ -184,7 +192,8 @@ while T < max_tsteps:
     #returns = Variable(advantages.data + values.data.squeeze())
     concepts = Variable(torch.cat(concepts,0))
     mask = torch.FloatTensor(mask)
-    mask = Variable(torch.ones(*mask.size())-mask)
+    ones = mask.new(mask.size()) + 1.0
+    mask = Variable(ones-mask)
 
     action_loss = -torch.mean(action_logs*advantages) # Standard policy gradient
 
