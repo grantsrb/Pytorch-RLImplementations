@@ -15,7 +15,7 @@ import utils
 gamma = .99 # Discount factor
 lambda_ = .97 # GAE moving average factor
 batch_size = 3 # Number of times to perform rollout and collect gradients before updating model
-n_envs = 20 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
+n_envs = 1 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
 entropy_const = 0.01 # Scales the entropy portion of the loss function
@@ -60,6 +60,7 @@ obs_bookmarks = [env.reset() for env in envs] # Used to track observations betwe
 prepped_obs = utils.preprocess(obs_bookmarks[0]) # Returns a vector representation of the observation
 prev_bookmarks = [np.zeros_like(prepped_obs) for i in range(n_envs)]
 obs = np.zeros((prepped_obs.shape[0]*2,)+prepped_obs.shape[1:],dtype=np.float32)
+obs_shape = obs.shape
 
 # Various functions that will be useful later
 logsoftmax = nn.LogSoftmax()
@@ -114,13 +115,17 @@ while T < max_tsteps:
 
             # Prep observation
             observation = utils.preprocess(observation)
-            prepped_obs = np.concatenate([observation, prev_obs], axis=0)
+            prepped_obs = np.zeros(obs_shape)
+            prepped_obs[:obs_shape[0]//2] = observation
+            prepped_obs[obs_shape[0]//2:] = prev_obs
             prev_obs = observation
-            observs.append(prepped_obs.tolist()) # Observations will be used later
+            observs.append(prepped_obs) # Observations will be used later
 
             # Take action
-            prepped_obs = torch.FloatTensor(prepped_obs.tolist()).unsqueeze(0)
-            t_state = Variable(prepped_obs)
+            if torch.cuda.is_available():
+                t_state = Variable(torch.from_numpy(prepped_obs).unsqueeze(0).float().cuda())
+            else:
+                t_state = Variable(torch.from_numpy(prepped_obs).unsqueeze(0).float())
             value, raw_output, concept, conc_pred = net.forward(t_state, batch_norm=batch_norm)
             action_pred = softmax(raw_output)
             pvec = utils.sum_one(action_pred.data.tolist()[0]) # Create policy probability vector
@@ -137,7 +142,7 @@ while T < max_tsteps:
                 first_roll = False
             values.append(value)
             rewards.append(reward)
-            concepts.append(concept.data.view(1,-1))
+            concepts.append(concept.data.view(1,-1).tolist())
 
             if done or t==n_tsteps-1 or rewards[-1] != 0: # Reached end of rollout for this episode
 
@@ -190,9 +195,11 @@ while T < max_tsteps:
     advantages = utils.discount(advantages, gamma*lambda_, mask) # Generalized Value Estimation
     advantages = Variable(torch.FloatTensor(advantages))
     #returns = Variable(advantages.data + values.data.squeeze())
-    concepts = Variable(torch.cat(concepts,0))
+    concepts = Variable(torch.FloatTensor(concepts))
     mask = torch.FloatTensor(mask)
-    ones = mask.new(mask.size()) + 1.0
+    ones = torch.ones(mask.size())
+    if torch.cuda.is_available():
+        ones = ones.cuda()
     mask = Variable(ones-mask)
 
     action_loss = -torch.mean(action_logs*advantages) # Standard policy gradient
