@@ -34,10 +34,10 @@ if len(sys.argv) > 1:
     if "conc" in str(sys.argv[idx]):
         predict_concept = True
         idx += 1
-    if len(sys.argv) >= idx:
+    if len(sys.argv) > idx:
         resume = bool(sys.argv[idx])
         idx += 1
-        if len(sys.argv) >= idx:
+        if len(sys.argv) > idx:
             render = bool(sys.argv[idx])
 
 if predict_concept:
