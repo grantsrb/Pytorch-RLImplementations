@@ -91,8 +91,8 @@ class Fitter():
                 clip_loss = -torch.mean(torch.min(ratios*batch_advs, clipped_ratios*batch_advs))
 
                 vals_clipped = batch_old_vals + torch.clamp(values.squeeze()-batch_old_vals, -clip_const, clip_const)
-                v1 = (values.squeeze() - batch_returns)**2
-                v2 = (vals_clipped - batch_returns)**2
+                v1 = (values.squeeze() - batch_rewards)**2
+                v2 = (vals_clipped - batch_rewards)**2
                 val_loss = val_const * .5 * torch.mean(torch.max(v1, v2))
 
                 logprobs = self.logsoftmax(pi_raw)
