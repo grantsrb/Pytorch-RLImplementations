@@ -49,13 +49,16 @@ class Model(nn.Module):
         fx = x
 
         for conv,bnorm in zip(self.convs,self.bnorms):
-            fx = self.relu(conv(fx))
+            fx = conv(fx)
+            fx = self.relu(fx)
             fx = bnorm(fx) if batch_norm else fx
 
         concept = fx
-        conc_pred = self.relu(self.img_pred1(concept))
+        conc_pred = self.img_pred1(concept)
+        conc_pred = self.relu(conc_pred)
         conc_pred = self.imgnorm1(conc_pred) if batch_norm else conc_pred
-        conc_pred = self.relu(self.img_pred2(conc_pred))
+        conc_pred = self.img_pred2(conc_pred)
+        conc_pred = self.relu(conc_pred)
 
         fx = conc_pred
         fx = fx.view(-1,self.flat_size)
