@@ -107,7 +107,6 @@ T = 0 # Tracks total environmental steps taken
 net.train(mode=False)
 
 while T < max_tsteps:
-
     for i,env in enumerate(envs):
         observation = obs_bookmarks[i]
         prev_obs = prev_bookmarks[i]

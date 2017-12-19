@@ -48,8 +48,7 @@ def step(env, action):
     """
     Takes a step in the provided environment using the provided action
     """
-    obs, reward, done, info = env.step(action)
-    return obs, reward, done, info
+    return env.step(action)
 
 
 def sum_one(action_vec):

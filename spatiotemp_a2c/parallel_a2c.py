@@ -10,13 +10,15 @@ import sys
 import spatiotemp_model as model
 from utils import prep_obs, get_action, step, discount, reset, preprocess
 from multiprocessing import Pool
+import time
 
 
 # hyperparameters
 gamma = .99 # Discount factor
 lambda_ = .97 # GAE moving average factor
 batch_size = 3 # Number of times to perform rollout and collect gradients before updating model
-n_envs = 10 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
+n_envs = 20 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
+n_processes = 3
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
 entropy_const = 0.01 # Scales the entropy portion of the loss function
@@ -25,7 +27,7 @@ max_norm = 0.4 # Scales the gradients using their norm
 max_tsteps = 80e6 # The number of environmental steps to take before ending the algorithm
 lr = 1e-3/n_envs # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
 batch_norm = True
-predict_concept = True
+predict_concept = False
 
 
 resume = False
@@ -44,20 +46,17 @@ if len(sys.argv) > 1:
         if len(sys.argv) > idx:
             render = bool(sys.argv[idx])
 
-#if predict_concept:
-#    net_save_file = "net_conc_pred.p"
-#    optim_save_file = "optim_conc_pred.p"
-#    log_file = "log_conc_pred.txt"
-#else:
-#    net_save_file = "net_control.p"
-#    optim_save_file = "optim_control.p"
-#    log_file = "log_control.txt"
-net_save_file = "net_test.p"
-optim_save_file = "optim_test.p"
-log_file = "log_test.txt"
+if predict_concept:
+   net_save_file = "net_conc_pred.p"
+   optim_save_file = "optim_conc_pred.p"
+   log_file = "log_conc_pred.txt"
+else:
+   net_save_file = "net_control.p"
+   optim_save_file = "optim_control.p"
+   log_file = "log_control.txt"
 
 # Make Pool
-pool = Pool(n_envs)
+pool = Pool(n_processes)
 
 # Make environments
 envs = [gym.make("Pong-v0") for i in range(n_envs)]
@@ -102,7 +101,6 @@ else:
 
 optimizer.zero_grad()
 
-
 # Store ep_actions, observations, ep_values
 ep_actions, observs, ep_rewards, ep_values, ep_advantages, ep_dones = [], [], [], [], [], []
 episode_reward = 0
@@ -118,7 +116,6 @@ net.train(mode=False)
 
 while T < max_tsteps:
     first_roll = True
-
     for t in range(n_tsteps):
         T+=1*n_envs
 
@@ -128,6 +125,7 @@ while T < max_tsteps:
         async_arr = [pool.apply_async(prep_obs, [obs, prev]) for obs, prev in zip(obs_bookmarks, prev_bookmarks)]
         results = [async.get() for async in async_arr]
         prepped_obses, prev_bookmarks = zip(*results)
+        prev_bookmarks = np.asarray(prev_bookmarks)
         observs.append(prepped_obses) # Observations will be used later
 
         # Take action
@@ -142,11 +140,13 @@ while T < max_tsteps:
         ep_actions.append(actions)
 
         # Add 2 to actions for possible actions 2 or 3 (pong specific)
-        async_arr = [pool.apply_async(step, [envs[i],action+2]) for i, action in enumerate(actions)]
-        results = [async.get() for async in async_arr]
+        results = [envs[i].step(action+2) for i, action in enumerate(actions)]
         obs_bookmarks, rewards, dones, infos = zip(*results)
-
+        obs_bookmarks = np.asarray(obs_bookmarks)
         dones = np.asarray(dones)
+        rewards = np.asarray(rewards)
+
+
         indices = (rewards!=0)
         if reward_count < 100:
             running_reward += np.sum(rewards[indices])
@@ -161,11 +161,13 @@ while T < max_tsteps:
         else:
             first_roll = False
         ep_values.append(values)
-        ep_rewards.append(np.asarray(rewards))
-        ep_dones.append(np.asarray(dones))
+        ep_rewards.append(rewards)
+        ep_dones.append(dones)
 
-        obs_bookmarks = [envs[i].reset() if d else obs_bookmarks[i] for i,d in enumerate(dones)]
-        prev_bookmarks = [np.zeros_like(prev_bookmarks[i]) if d else prev_bookmarks[i] for i,d in enumerate(dones)]
+        for i,d in enumerate(dones):
+            if d:
+                obs_bookmarks[i] = envs[i].reset()
+                prev_bookmarks[i] = np.zeros_like(prev_bookmarks[i])
 
     # End of rollout
     bootstrap_indices = (ep_rewards[-1] == 0) # Pong specific
@@ -211,24 +213,27 @@ while T < max_tsteps:
     advantages = [async.get() for async in async_arr]
     advantages = Variable(torch.FloatTensor(advantages).view(-1))
     #returns = Variable(ep_advantages.data + ep_values.data.squeeze())
+
     mask = torch.from_numpy(1.-ep_dones).float()
     if torch.cuda.is_available():
         mask = mask.cuda()
     mask = Variable(mask.permute(1,0).contiguous().view(-1))
 
+
+    # Evaluate Losses
     action_loss = -torch.mean(action_logs*advantages) # Standard policy gradient
-
     value_loss = val_const*mseloss(values.squeeze(), t_rewards)
-
     entropy = -entropy_const*torch.mean(softmax(raw_actions)*softlogs)
-
     if predict_concept:
         conc_loss = conc_const*torch.mean(torch.sum((conc_preds[:-1]-concepts[1:])**2, dim=-1)*mask[:-1])
         loss = action_loss + value_loss - entropy + conc_loss
     else:
         loss = action_loss + value_loss - entropy
+
     loss.backward()
     net.check_grads() # Checks for NaN in gradients.
+
+
 
     avg_loss = loss.data.squeeze()[0] if avg_loss == None else .99*avg_loss + .01*loss.data.squeeze()[0]
 
