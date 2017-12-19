@@ -15,7 +15,7 @@ import utils
 gamma = .99 # Discount factor
 lambda_ = .97 # GAE moving average factor
 batch_size = 3 # Number of times to perform rollout and collect gradients before updating model
-n_envs = 1 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
+n_envs = 10 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
 entropy_const = 0.01 # Scales the entropy portion of the loss function
@@ -44,13 +44,13 @@ if len(sys.argv) > 1:
             render = bool(sys.argv[idx])
 
 if predict_concept:
-    net_save_file = "net_conc_pred.p"
-    optim_save_file = "optim_conc_pred.p"
-    log_file = "log_conc_pred.txt"
+   net_save_file = "net_conc_pred.p"
+   optim_save_file = "optim_conc_pred.p"
+   log_file = "log_conc_pred.txt"
 else:
-    net_save_file = "net_control.p"
-    optim_save_file = "optim_control.p"
-    log_file = "log_control.txt"
+   net_save_file = "net_control.p"
+   optim_save_file = "optim_control.p"
+   log_file = "log_control.txt"
 
 # Make environments
 envs = [gym.make("Pong-v0") for i in range(n_envs)]
@@ -71,7 +71,7 @@ softmax = nn.Softmax()
 mseloss = nn.MSELoss()
 
 # Creat model and optimizer
-net = model.Model(obs.shape, action_dim) 
+net = model.Model(obs.shape, action_dim)
 if torch.cuda.is_available():
     net = net.cuda()
     torch.FloatTensor = torch.cuda.FloatTensor
@@ -114,7 +114,7 @@ while T < max_tsteps:
         observation = obs_bookmarks[i]
         prev_obs = prev_bookmarks[i]
         first_roll = True
-        
+
         for t in range(n_tsteps):
             T+=1
 
@@ -137,12 +137,12 @@ while T < max_tsteps:
             action_pred = softmax(raw_output)
             pvec = utils.sum_one(action_pred.data.tolist()[0]) # Create policy probability vector
             action = np.random.choice(action_dim, p=pvec) # Stochastically sample from vector
-            actions.append(action) 
+            actions.append(action)
 
             observation, reward, done, info = env.step(action+2) # Add two for possible actions 2 or 3 (pong specific)
-            
+
             value = value.data.squeeze()[0]
-            if not first_roll: 
+            if not first_roll:
                 advantages.append(rewards[-1]+gamma*value-values[-1]) # Make advantage for previous step
                 mask.append(0) # Track rollout indices
             else:
@@ -158,7 +158,7 @@ while T < max_tsteps:
                     rewards[-1] = values[-1] # Set bootstrapped reward to fit critic later
 
                 else: # Reached terminal state
-                    advantages.append(rewards[-1]-values[-1]) 
+                    advantages.append(rewards[-1]-values[-1])
 
                     # Reward book keeping
                     if reward_count < 100:
@@ -169,16 +169,16 @@ while T < max_tsteps:
                         avg_reward = .99*avg_reward + .01*rewards[-1]
 
                 mask.append(1) # Mark end of rollout
-                if done: 
+                if done:
                     observation = env.reset()
                     prev_obs = np.zeros_like(prev_obs)
 
                 # Track observation for when we return to this environment in the next episode (danananana sup snoop!)
-                obs_bookmarks[i] = observation 
+                obs_bookmarks[i] = observation
                 prev_bookmarks[i] = prev_obs
                 first_roll = True
-                
-                
+
+
     net.train(mode=True)
     episode += 1
     print("T="+str(T),"– Episode", episode, "–– Avg Reward:", avg_reward, "–– Avg Action:", np.mean(actions))
@@ -212,17 +212,17 @@ while T < max_tsteps:
     action_loss = -torch.mean(action_logs*advantages) # Standard policy gradient
 
     value_loss = val_const*mseloss(values.squeeze(), t_rewards)
- 
-    entropy = -entropy_const*torch.mean(softmax(raw_actions)*softlogs) 
 
-    if predict_concept: 
+    entropy = -entropy_const*torch.mean(softmax(raw_actions)*softlogs)
+
+    if predict_concept:
         conc_loss = conc_const*torch.mean(torch.sum((conc_preds[:-1]-concepts[1:])**2, dim=-1)*mask[:-1])
         loss = action_loss + value_loss - entropy + conc_loss
     else:
         loss = action_loss + value_loss - entropy
     loss.backward()
     net.check_grads() # Checks for NaN in gradients.
-    
+
     avg_loss = loss.data.squeeze()[0] if avg_loss == None else .99*avg_loss + .01*loss.data.squeeze()[0]
 
     if episode % batch_size == 0:
@@ -243,10 +243,9 @@ while T < max_tsteps:
         gc.collect()
         max_mem_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         print("Memory Used: {:.2f} MB".format(max_mem_used / 1024))
-    
+
     episode_reward = 0
     actions, observs, rewards, values, advantages, mask, concepts, conc_preds = [], [], [], [], [], [], [],[]
     net.train(mode=False)
 
 logger.close()
-
