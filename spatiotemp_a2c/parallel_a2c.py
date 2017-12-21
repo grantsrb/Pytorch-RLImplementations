@@ -82,7 +82,7 @@ for i,env in enumerate(envs):
 # Make model and optimizer
 action_dim = 2 # Pong specific number of possible ep_actions
 obs_bookmarks = [envs[i].reset() for i in range(n_envs)] # Used to track observations between environments
-prepped_obs = preprocess(obs_bookmarks[0]) # Returns a vector representation of the observation
+prepped_obs = preprocess(obs_bookmarks[0]) # Returns a prepped representation of the observation
 prev_bookmarks = [np.zeros_like(prepped_obs) for i in range(n_envs)]
 obs_shape = (prepped_obs.shape[0]*2,)+prepped_obs.shape[1:]
 current_obses = [np.zeros(obs_shape,dtype=np.float32) for i in range(n_envs)]
@@ -133,9 +133,9 @@ net.train(mode=False)
 while T < max_tsteps:
     first_roll = True
     for t in range(n_tsteps):
-        T+=1*n_envs
+        T+=n_envs
 
-        if render and i == 0: env.render()
+        if render: envs[0].render()
 
         # Prep observation
         async_arr = [pool.apply_async(prep_obs, [obs, prev]) for obs, prev in zip(obs_bookmarks, prev_bookmarks)]
