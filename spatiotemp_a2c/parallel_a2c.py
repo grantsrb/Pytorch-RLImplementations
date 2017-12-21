@@ -8,7 +8,7 @@ import gc
 import resource
 import sys
 import spatiotemp_model as model
-from utils import prep_obs, get_action, step, discount, reset, preprocess
+from utils import prep_obs, get_action, discount, reset, preprocess
 from multiprocessing import Pool
 import time
 
@@ -22,34 +22,50 @@ n_processes = 3
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
 entropy_const = 0.01 # Scales the entropy portion of the loss function
-conc_const = 0.1
+spatio_const = 0.001 # Scales the spatiotemporal prediction loss function
 max_norm = 0.4 # Scales the gradients using their norm
 max_tsteps = 80e6 # The number of environmental steps to take before ending the algorithm
-lr = 1e-3/n_envs # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
-batch_norm = True
-predict_concept = False
+lr = 1e-4 # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
 
+print("gamma:", gamma)
+print("lambda_:", lambda_)
+print("batch_size:", batch_size)
+print("n_envs:", n_envs)
+print("n_tsteps:", n_tsteps)
+print("val_const:", val_const)
+print("entropy_const:", entropy_const)
+print("spatio_const:", spatio_const)
+print("max_norm:", max_norm)
+print("lr:", lr)
 
+batch_norm = False
+predict_spatio = False
+test = False
 resume = False
 render = False
 if len(sys.argv) > 1:
-    idx = 1
-    if "conc" in str(sys.argv[idx]):
-        predict_concept = True
-        idx += 1
-    if len(sys.argv) > idx and "norm" in str(sys.argv[idx]):
-        batch_norm=True
-        idx += 1
-    if len(sys.argv) > idx:
-        resume = bool(sys.argv[idx])
-        idx += 1
-        if len(sys.argv) > idx:
-            render = bool(sys.argv[idx])
+    for arg in sys.argv[1:]:
+        str_arg = str(arg)
+        if "spatio" in str_arg: predict_spatio = True
+        if "norm" in str_arg: batch_norm = True
+        if "test" in str_arg: test = True
+        if "resume" in str_arg: resume = True
+        if "render" in str_arg: render = True
 
-if predict_concept:
-   net_save_file = "net_conc_pred.p"
-   optim_save_file = "optim_conc_pred.p"
-   log_file = "log_conc_pred.txt"
+print("Batch Norm:", batch_norm)
+print("Spatio:", predict_spatio)
+print("Test:", test)
+print("Resume:", resume)
+print("Render:", render)
+
+if test:
+    net_save_file = "net_test.p"
+    optim_save_file = "optim_test.p"
+    log_file = "log_test.txt"
+elif predict_spatio:
+   net_save_file = "net_spatio_pred.p"
+   optim_save_file = "optim_spatio_pred.p"
+   log_file = "log_spatio_pred.txt"
 else:
    net_save_file = "net_control.p"
    optim_save_file = "optim_control.p"
@@ -133,27 +149,28 @@ while T < max_tsteps:
             t_state = Variable(torch.from_numpy(np.asarray(prepped_obses)).float().cuda())
         else:
             t_state = Variable(torch.from_numpy(np.asarray(prepped_obses)).float())
-        values, raw_outputs, concepts, conc_preds = net.forward(t_state, batch_norm=batch_norm)
+        values, raw_outputs, spatios, spatio_preds = net.forward(t_state, batch_norm=batch_norm)
         action_preds = softmax(raw_outputs).data.tolist()
         async_arr = [pool.apply_async(get_action, [pred, action_dim]) for pred in action_preds] # Create policy probability vector
         actions = [async.get() for async in async_arr]
         ep_actions.append(actions)
 
         # Add 2 to actions for possible actions 2 or 3 (pong specific)
-        results = [envs[i].step(action+2) for i, action in enumerate(actions)]
+        results = [envs[i].step(action+2) for i,action in enumerate(actions)]
         obs_bookmarks, rewards, dones, infos = zip(*results)
         obs_bookmarks = np.asarray(obs_bookmarks)
         dones = np.asarray(dones)
         rewards = np.asarray(rewards)
 
-
         indices = (rewards!=0)
         if reward_count < 100:
             running_reward += np.sum(rewards[indices])
             reward_count += np.sum(indices)
-            avg_reward = running_reward/float(reward_count)
+            if reward_count > 0:
+                avg_reward = running_reward/float(reward_count)
         else:
-            avg_reward = .99*avg_reward + .01*np.mean(rewards[indices])
+            if np.sum(indices) > 0:
+                avg_reward = .99*avg_reward + .01*np.mean(rewards[indices])
 
         values = values.data.squeeze().cpu().numpy()
         if not first_roll:
@@ -168,6 +185,9 @@ while T < max_tsteps:
             if d:
                 obs_bookmarks[i] = envs[i].reset()
                 prev_bookmarks[i] = np.zeros_like(prev_bookmarks[i])
+
+
+
 
     # End of rollout
     bootstrap_indices = (ep_rewards[-1] == 0) # Pong specific
@@ -198,9 +218,9 @@ while T < max_tsteps:
     else:
         t_observs = Variable(torch.from_numpy(observs))
 
-    values, raw_actions, concepts, conc_preds = net.forward(t_observs, batch_norm=batch_norm)
-    conc_preds = conc_preds.view(conc_preds.size(0),-1)
-    concepts = Variable(concepts.data.view(concepts.size(0), -1))
+    values, raw_actions, spatios, spatio_preds = net.forward(t_observs, batch_norm=batch_norm)
+    spatio_preds = spatio_preds.view(spatio_preds.size(0),-1)
+    spatios = Variable(spatios.data.view(spatios.size(0), -1))
     softlogs = logsoftmax(raw_actions)
     actions = torch.LongTensor(ep_actions).permute(1,0).contiguous().view(-1)
     if torch.cuda.is_available():
@@ -224,14 +244,14 @@ while T < max_tsteps:
     action_loss = -torch.mean(action_logs*advantages) # Standard policy gradient
     value_loss = val_const*mseloss(values.squeeze(), t_rewards)
     entropy = -entropy_const*torch.mean(softmax(raw_actions)*softlogs)
-    if predict_concept:
-        conc_loss = conc_const*torch.mean(torch.sum((conc_preds[:-1]-concepts[1:])**2, dim=-1)*mask[:-1])
-        loss = action_loss + value_loss - entropy + conc_loss
+    if predict_spatio:
+        spatio_loss = spatio_const*torch.mean(torch.sum((spatio_preds[:-1]-spatios[1:])**2, dim=-1)*mask[:-1])
+        loss = action_loss + value_loss - entropy + spatio_loss
     else:
         loss = action_loss + value_loss - entropy
 
     loss.backward()
-    net.check_grads() # Checks for NaN in gradients.
+    net.check_grads() # Checks for NaN in gradients. Pytorch can be finicky
 
 
 
@@ -243,7 +263,10 @@ while T < max_tsteps:
         optimizer.step()
         optimizer.zero_grad()
         print("Epoch", epoch, "–– Avg Reward:", avg_reward, "–– Avg Loss:",avg_loss, "–– Norm:", norm)
-        print("Act Loss:", action_loss.data[0], "– Val Loss:", value_loss.data[0], "– Entropy",entropy.data[0])
+        if predict_spatio:
+            print("Act Loss:", action_loss.data[0], "–– Val Loss:", value_loss.data[0], "\nEntropy",entropy.data[0], "–– Spatio Loss:", spatio_loss.data[0])
+        else:
+            print("Act Loss:", action_loss.data[0], "–– Val Loss:", value_loss.data[0], "\nEntropy",entropy.data[0])
         seq = [T, avg_reward, avg_loss, norm, action_loss.data[0], value_loss.data[0], entropy.data[0]]
         logger.write(",".join([str(x) for x in seq]))
         logger.write("\n")
