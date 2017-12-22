@@ -79,7 +79,6 @@ envs = [gym.make("Pong-v0") for i in range(n_envs)]
 for i,env in enumerate(envs):
     env.seed(i)
 
-# Make model and optimizer
 action_dim = 2 # Pong specific number of possible ep_actions
 obs_bookmarks = [envs[i].reset() for i in range(n_envs)] # Used to track observations between environments
 prepped_obs = preprocess(obs_bookmarks[0]) # Returns a prepped representation of the observation
@@ -93,7 +92,7 @@ softmax = nn.Softmax()
 mseloss = nn.MSELoss()
 
 # Creat model and optimizer
-net = model.Model(obs_shape, action_dim)
+net = model.Model(obs_shape, action_dim, batch_norm)
 if torch.cuda.is_available():
     net = net.cuda()
     torch.FloatTensor = torch.cuda.FloatTensor
@@ -118,7 +117,7 @@ else:
 optimizer.zero_grad()
 
 # Store ep_actions, observations, ep_values
-ep_actions, observs, ep_rewards, ep_values, ep_advantages, ep_dones = [], [], [], [], [], []
+ep_actions, ep_observs, ep_rewards, ep_values, ep_advantages, ep_dones = [], [], [], [], [], []
 episode_reward = 0
 avg_reward = 0
 running_reward = 0
@@ -142,14 +141,14 @@ while T < max_tsteps:
         results = [async.get() for async in async_arr]
         prepped_obses, prev_bookmarks = zip(*results)
         prev_bookmarks = np.asarray(prev_bookmarks)
-        observs.append(prepped_obses) # Observations will be used later
+        ep_observs.append(prepped_obses) # Observations will be used later
 
         # Take action
         if torch.cuda.is_available():
             t_state = Variable(torch.from_numpy(np.asarray(prepped_obses)).float().cuda())
         else:
             t_state = Variable(torch.from_numpy(np.asarray(prepped_obses)).float())
-        values, raw_outputs, spatios, spatio_preds = net.forward(t_state, batch_norm=batch_norm)
+        values, raw_outputs, spatios, spatio_preds = net.forward(t_state)
         action_preds = softmax(raw_outputs).data.tolist()
         async_arr = [pool.apply_async(get_action, [pred, action_dim]) for pred in action_preds] # Create policy probability vector
         actions = [async.get() for async in async_arr]
@@ -212,13 +211,13 @@ while T < max_tsteps:
     rewards = [async.get() for async in async_arr]
     t_rewards = Variable(torch.FloatTensor(rewards).view(-1))
 
-    observs = np.asarray(observs).astype(np.float32).swapaxes(0,1).reshape((-1,)+obs_shape)
+    ep_observs = np.asarray(ep_observs).astype(np.float32).swapaxes(0,1).reshape((-1,)+obs_shape)
     if torch.cuda.is_available():
-        t_observs = Variable(torch.from_numpy(observs).cuda())
+        t_observs = Variable(torch.from_numpy(ep_observs).cuda())
     else:
-        t_observs = Variable(torch.from_numpy(observs))
+        t_observs = Variable(torch.from_numpy(ep_observs))
 
-    values, raw_actions, spatios, spatio_preds = net.forward(t_observs, batch_norm=batch_norm)
+    values, raw_actions, spatios, spatio_preds = net.forward(t_observs)
     spatio_preds = spatio_preds.view(spatio_preds.size(0),-1)
     spatios = Variable(spatios.data.view(spatios.size(0), -1))
     softlogs = logsoftmax(raw_actions)
@@ -280,7 +279,7 @@ while T < max_tsteps:
         print("Memory Used: {:.2f} MB".format(max_mem_used / 1024))
 
     episode_reward = 0
-    ep_actions, observs, ep_rewards, ep_values, ep_advantages, ep_dones = [], [], [], [], [], []
+    ep_actions, ep_observs, ep_rewards, ep_values, ep_advantages, ep_dones = [], [], [], [], [], []
     net.train(mode=False)
 
 logger.close()
