@@ -6,11 +6,12 @@ import math
 
 
 class Model(nn.Module):
-    def __init__(self, obs_space, act_space):
+    def __init__(self, obs_space, act_space, batch_norm=False):
         super(Model, self).__init__()
-        
+
         self.obs_space = obs_space
         self.act_space = act_space
+        self.batch_norm = batch_norm
 
         self.convs = nn.ModuleList([])
         self.bnorms = nn.ModuleList([])
@@ -33,9 +34,9 @@ class Model(nn.Module):
 
         self.flat_size = height3*width3*64
 
-        self.img_pred1 = nn.Conv2d(64, 64, 3, stride=1, padding=1)  
+        self.img_pred1 = nn.Conv2d(64, 64, 3, stride=1, padding=1)
         self.imgnorm1 = nn.BatchNorm2d(64)
-        self.img_pred2 = nn.Conv2d(64, 64, 3, stride=1, padding=1)  
+        self.img_pred2 = nn.Conv2d(64, 64, 3, stride=1, padding=1)
 
         self.fc1 = nn.Linear(self.flat_size, 200)
         self.fcnorm1 = nn.BatchNorm1d(200)
@@ -43,34 +44,37 @@ class Model(nn.Module):
         self.val = nn.Linear(200, 1)
 
         self.relu = nn.ReLU()
-        
+        self.logsoftmax = nn.LogSoftmax()
+        self.softmax = nn.Softmax()
+        self.mseloss = nn.MSELoss()
 
-    def forward(self, x, batch_norm=False):
+
+    def forward(self, x):
         fx = x
 
         for conv,bnorm in zip(self.convs,self.bnorms):
             fx = conv(fx)
             fx = self.relu(fx)
-            fx = bnorm(fx) if batch_norm else fx
+            fx = bnorm(fx) if self.batch_norm else fx
 
-        concept = fx
-        conc_pred = self.img_pred1(concept)
+        concept = fx.view(-1,self.flat_size)
+        conc_pred = self.img_pred1(fx)
         conc_pred = self.relu(conc_pred)
-        conc_pred = self.imgnorm1(conc_pred) if batch_norm else conc_pred
+        conc_pred = self.imgnorm1(conc_pred) if self.batch_norm else conc_pred
         conc_pred = self.img_pred2(conc_pred)
         conc_pred = self.relu(conc_pred)
 
+        conc_pred = conc_pred.view(-1,self.flat_size)
         fx = conc_pred
-        fx = fx.view(-1,self.flat_size)
         fx = self.fc1(fx)
-        fx = self.fcnorm1(fx) if batch_norm else fx
+        fx = self.fcnorm1(fx) if self.batch_norm else fx
         fx = self.relu(fx)
 
         pi = self.pi(fx)
-        val = self.val(fx) 
+        val = self.val(fx)
 
         return val, pi, concept, conc_pred
-            
+
     def check_grads(self):
         """
         Checks all gradients for NaN values. NaNs have a way of sneaking in in pytorch...
