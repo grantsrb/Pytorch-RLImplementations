@@ -115,10 +115,11 @@ avg_loss = None
 epoch = 0
 
 while runner.T < max_tsteps:
-    ep_actions, ep_observs, ep_rewards, ep_values, ep_deltas, ep_dones = runner.rollout(net, n_tsteps, batch_norm, gamma, render)
+    ep_data = runner.rollout(net, n_tsteps, batch_norm, gamma, render)
+    ep_actions, ep_observs, ep_rewards, ep_values, ep_deltas, ep_dones = ep_data
 
     net.train(mode=True)
-    print("T="+str(runner.T),"– Episode", runner.episode, "–– Avg Reward:", runner.avg_reward, "–– Avg Action:", np.mean(ep_actions))
+    print("T="+str(runner.T),"– Episode", runner.episode, "– Avg Reward:", runner.avg_reward, "– Avg Action:", np.mean(ep_actions))
 
     if runner.reward_count > 100 and runner.avg_reward > rew_cutoff:
         rew_cutoff = rew_cutoff + 0.1
