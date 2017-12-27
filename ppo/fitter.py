@@ -54,11 +54,13 @@ class Fitter():
 
         old_vals, old_pis, spatios, spatio_preds = self.net.forward(observs)
         old_vals = Variable(old_vals.data)
+        old_pis = self.net.softmax(old_pis)
         old_pis = old_pis.data[torch.arange(0,old_pis.size(0)).long(),actions]
 
         async_arr = [self.pool.apply_async(discount, [deltas[:,i], self.gamma*self.lambda_, dones[:,i]]) for i in range(deltas.shape[1])]
         advantages = [async.get() for async in async_arr]
         advantages = Variable(torch.FloatTensor(advantages).view(-1))
+
         returns = Variable(advantages.data + old_vals.data.squeeze())
         #advantages = Variable((advantages-torch.mean(advantages))/(torch.std(advantages)+1e-7))
 
