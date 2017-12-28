@@ -100,7 +100,7 @@ if torch.cuda.is_available():
     torch.LongTensor = torch.cuda.LongTensor
 optimizer = optim.Adam(net.parameters(), lr=lr)
 
-ppo_fitter = Fitter(net, optimizer, pool, val_const=val_const, entropy_const=entropy_const,
+q_fitter = Fitter(net, optimizer, pool, val_const=val_const, entropy_const=entropy_const,
                         spatio_const=spatio_const, gamma=gamma, lambda_=lambda_,
                         predict_spatio=predict_spatio)
 
@@ -155,7 +155,7 @@ while runner.T < max_tsteps:
 
     # Book keeping
     epoch += 1
-    losses = ppo_fitter.fit(combined_data, epochs=n_epochs, batch_size=ppo_batch_size, clip_const=clip_const, max_norm=max_norm)
+    losses = q_fitter.fit(combined_data, epochs=n_epochs, batch_size=ppo_batch_size, clip_const=clip_const, max_norm=max_norm)
     loss, action_loss, value_loss, entropy, spatio_loss = losses
 
     avg_loss = loss if avg_loss == None else .99*avg_loss + .01*loss
