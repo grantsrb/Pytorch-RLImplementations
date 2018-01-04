@@ -40,7 +40,7 @@ class Model(nn.Module):
 
         self.fc1 = nn.Linear(self.flat_size, 200)
         self.fcnorm1 = nn.BatchNorm1d(200)
-        self.pi = nn.Linear(200, act_space)
+        self.q_out = nn.Linear(200, act_space)
         self.val = nn.Linear(200, 1)
 
         self.relu = nn.ReLU()
@@ -70,10 +70,10 @@ class Model(nn.Module):
         fx = self.fcnorm1(fx) if self.batch_norm else fx
         fx = self.relu(fx)
 
-        pi = self.pi(fx)
+        q = self.q_out(fx)
         val = self.val(fx)
 
-        return val, pi, concept, conc_pred
+        return val, q, concept, conc_pred
 
     def check_grads(self):
         """

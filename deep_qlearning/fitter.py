@@ -33,7 +33,7 @@ class Fitter():
         self.old_actions = []
 
 
-    def fit(self, new_data, epochs=10, batch_size=128, clip_const=0.2, max_norm=0.5):
+    def fit(self, new_data, epochs=10, batch_size=128, max_norm=0.5):
         """
         Runs stochastic gradient descent on the collected data.
 
@@ -61,7 +61,7 @@ class Fitter():
             observs = observs.cuda()
             dones = dones.cuda()
 
-        if self.old_observs != []:
+        if type(self.old_observs) != type([]):
             self.old_observs = torch.cat([self.old_observs, observs], 0)
             self.old_rewards = torch.cat([self.old_rewards, rewards], 0)
             self.old_dones = torch.cat([self.old_dones, dones], 0)
@@ -87,28 +87,23 @@ class Fitter():
         q_targets = Variable(rewards.data[:-1] + self.gamma*old_qs.data[1:]*dones[:-1])
 
         n_data_pts = len(actions)
-        n_loops = n_data_pts//batch_size
+        n_loops = (n_data_pts-1)//batch_size
         avg_loss = 0
-        avg_clip = 0
-        avg_val = 0
-        avg_entropy = 0
         for epoch in range(epochs):
-            indices = torch.randperm(n_data_pts)
-            running_loss,running_clip,running_val,running_entropy = 0,0,0,0
+            indices = torch.randperm(n_data_pts-1)
+            running_loss = 0
 
             for i in range(n_loops):
                 self.optimizer.zero_grad()
                 idxs = indices[i*batch_size:(i+1)*batch_size]
                 batch_acts = actions[idxs]
                 batch_obs = observs[idxs]
-                batch_targets = targets[idxs]
+                batch_targets = q_targets[idxs]
 
                 values, q_vals, spatios, spatio_preds = self.net.forward(batch_obs)
-
                 new_qs = q_vals[torch.arange(0,q_vals.size()[0]).long(), batch_acts]
 
                 loss = self.net.mseloss(new_qs, batch_targets)
-
                 running_loss += loss.data[0]
 
                 loss.backward()
@@ -117,7 +112,6 @@ class Fitter():
 
             self.net.check_grads()
             avg_loss += running_loss/n_data_pts
-
 
         return avg_loss/epochs
 

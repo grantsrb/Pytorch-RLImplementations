@@ -53,13 +53,23 @@ def sum_one(action_vec):
     new_vec[-1] = 1-running_sum
     return new_vec
 
-def get_action(action_vec, action_dim):
+def get_action(action_vec, action_dim, samp_type="pg", rand_sample=0.1):
     """
-    Samples action from action_vec
+    Samples action from action_vec.
+
+    samp_type - distinguishes between policy gradients and q values
+    rand_sample - probability to randomly sample q value
     """
-    p_vec = sum_one(action_vec) # Used to solve sum errors in numpy.random.choice
-    action = np.random.choice(action_dim, p=p_vec) # Stochastically sample from vector
-    return action
+    if "pg" in samp_type or "pol" in samp_type:
+        p_vec = sum_one(action_vec) # Used to solve sum errors in numpy.random.choice
+        action = np.random.choice(action_dim, p=p_vec) # Stochastically sample from vector
+    else:
+        prob = np.random.random()
+        if prob <= rand_sample:
+            action = np.random.choice(action_dim)
+        else:
+            action = np.argmax(action_vec)
+    return int(action)
 
 def gae(rewards, values, mask, gamma, lambda_):
     """

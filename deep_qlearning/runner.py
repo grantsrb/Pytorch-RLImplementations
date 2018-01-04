@@ -11,7 +11,7 @@ class Runner():
     Runner is used to collect a rollout of data from the environment. Inspired by OpenAI's baselines.
     """
 
-    def __init__(self, env_name, n_envs, pool):
+    def __init__(self, env_name, n_envs, pool, rand_sample=0.1):
         self.n_envs = n_envs
         self.envs = [gym.make(env_name) for i in range(n_envs)]
         for i in range(n_envs):
@@ -26,6 +26,7 @@ class Runner():
         self.reward_count = 0
         self.episode = 0
         self.T = 0 # Tracks total environmental steps taken
+        self.rand_sample_prob = rand_sample
 
 
 
@@ -51,7 +52,7 @@ class Runner():
                 t_obses = Variable(torch.from_numpy(np.asarray(prepped_obses)).float())
             values, raw_outputs, spatios, spatio_preds = net.forward(t_obses)
             action_preds = net.softmax(raw_outputs).data.tolist()
-            async_arr = [self.pool.apply_async(utils.get_action, [pred, net.act_space]) for pred in action_preds] # Sample action from policy's distribution
+            async_arr = [self.pool.apply_async(utils.get_action, [pred, net.act_space, "q-learning", self.rand_sample_prob]) for pred in action_preds]
             actions = [async.get() for async in async_arr]
             ep_actions.append(actions)
 
