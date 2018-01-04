@@ -85,9 +85,11 @@ prev_obs = 0
 
 net.train(mode=False)
 episode, epoch = 0, 0
+T = 0
 
 while True:
     if render: env.render()
+    T+=1
 
     # Prep state
     observation = preprocess(observation)
@@ -115,7 +117,7 @@ while True:
     if done:
         net.train(mode=True)
         episode += 1
-        print("Finish Episode", episode, "–– Reward:", episode_reward, "–– Avg Action:", np.mean(action_data))
+        print("T=",T,"– Episode", episode, "– Reward:", episode_reward, "– Avg Action:", np.mean(action_data))
 
         rewards = discount(rewards, gamma)
         t_rewards = Variable(torch.FloatTensor(rewards))
