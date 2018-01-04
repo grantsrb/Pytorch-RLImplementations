@@ -8,25 +8,34 @@ import gc
 import resource
 import sys
 import spatiotemp_model as model
-from utils import prep_obs, get_action, discount, reset, preprocess
+from utils import prep_obs, get_action, discount, preprocess
 from multiprocessing import Pool
 from runner import Runner
-from a2c import A2C
+from fitter import Fitter
 
 
 # hyperparameters
 gamma = .99 # Discount factor
 lambda_ = .97 # GAE moving average factor
 batch_size = 3 # Number of times to perform rollout and collect gradients before updating model
-n_envs = 10 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
-n_processes = 3
+n_envs = 20 # Number of environments to operate in parallel (note that this implementation does not run the environments on seperate threads)
+n_processes = n_envs
 n_tsteps = 15 # Maximum number of steps to take in an environment for one episode
 val_const = .5 # Scales the value portion of the loss function
 entropy_const = 0.01 # Scales the entropy portion of the loss function
 spatio_const = 0.001 # Scales the spatiotemporal prediction loss function
 max_norm = 0.4 # Scales the gradients using their norm
 max_tsteps = 80e6 # The number of environmental steps to take before ending the algorithm
-lr = 1e-3 # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
+lr = 1e-4 # Divide by batchsize as a shortcut to averaging the gradient over multiple batches
+# PPO Specific
+n_epochs = 5
+clip_const = 0.2
+
+if n_tsteps*n_envs % batch_size != 0:
+    while n_tsteps*n_envs % batch_size != 0:
+        batch_size+=1
+    print("Batch size is not perfectly divisible. Automatically switched to:",batch_size)
+ppo_batch_size = n_tsteps*n_envs//batch_size
 
 print("gamma:", gamma)
 print("lambda_:", lambda_)
@@ -38,6 +47,9 @@ print("entropy_const:", entropy_const)
 print("spatio_const:", spatio_const)
 print("max_norm:", max_norm)
 print("lr:", lr)
+print("n_epochs", n_epochs)
+print("clip_const", clip_const)
+print("ppo_batch_size", ppo_batch_size)
 
 batch_norm = False
 predict_spatio = False
@@ -88,7 +100,7 @@ if torch.cuda.is_available():
     torch.LongTensor = torch.cuda.LongTensor
 optimizer = optim.Adam(net.parameters(), lr=lr)
 
-a2c = A2C(net, n_envs, pool, val_const=val_const, entropy_const=entropy_const,
+ppo_fitter = Fitter(net, optimizer, pool, val_const=val_const, entropy_const=entropy_const,
                         spatio_const=spatio_const, gamma=gamma, lambda_=lambda_,
                         predict_spatio=predict_spatio)
 
@@ -103,22 +115,36 @@ else:
     else:
         logger.write("Batch Norm = False\n")
     if predict_spatio:
-        logger.write("T, Avg Reward, Avg Loss, Norm, Action Loss, Value Loss, Entropy, Spatio\n")
+        logger.write("T, Avg Reward, Avg Loss, Action Loss, Value Loss, Entropy, Spatio\n")
     else:
-        logger.write("T, Avg Reward, Avg Loss, Norm, Action Loss, Value Loss, Entropy\n")
+        logger.write("T, Avg Reward, Avg Loss, Action Loss, Value Loss, Entropy\n")
 
 optimizer.zero_grad()
-rew_cutoff = -0.8
+rew_cutoff = -0.9
 
 net.train(mode=False)
 avg_loss = None
 epoch = 0
 
 while runner.T < max_tsteps:
-    ep_actions, ep_observs, ep_rewards, ep_values, ep_deltas, ep_dones = runner.rollout(net, n_tsteps, batch_norm, gamma, render)
+
+    collections = []
+    for i in range(batch_size):
+        data = runner.rollout(net, n_tsteps, batch_norm, gamma, render)
+        collections.append(data)
+
+    combined_data = []
+    for i in range(len(data)):
+        if i == 0:
+            temp = []
+            for j in range(batch_size):
+                temp += collections[j][i]
+        else:
+            temp = np.concatenate([collections[j][i] for j in range(batch_size)], axis=0)
+        combined_data.append(temp)
 
     net.train(mode=True)
-    print("T="+str(runner.T),"– Episode", runner.episode, "–– Avg Reward:", runner.avg_reward, "–– Avg Action:", np.mean(ep_actions))
+    print("T="+str(runner.T),"– Episode", runner.episode, "–– Avg Reward:", runner.avg_reward, "–– Avg Action:", np.mean(combined_data[0]))
 
     if runner.reward_count > 100 and runner.avg_reward > rew_cutoff:
         rew_cutoff = rew_cutoff + 0.1
@@ -127,34 +153,31 @@ while runner.T < max_tsteps:
         lr *= .9
         optimizer.lr = lr
 
-    losses = a2c.step(ep_actions, ep_observs, ep_rewards, ep_values, ep_deltas, ep_dones)
+    # Book keeping
+    epoch += 1
+    losses = ppo_fitter.fit(combined_data, epochs=n_epochs, batch_size=ppo_batch_size, clip_const=clip_const, max_norm=max_norm)
     loss, action_loss, value_loss, entropy, spatio_loss = losses
 
-    avg_loss = loss.data.squeeze()[0] if avg_loss == None else .99*avg_loss + .01*loss.data.squeeze()[0]
+    avg_loss = loss if avg_loss == None else .99*avg_loss + .01*loss
 
-    if runner.episode % batch_size == 0:
-        epoch += 1
-        norm = nn.utils.clip_grad_norm(net.parameters(), max_norm) # Reduces gradients if their norm is too big. This prevents large changes to the policy. Large changes can cripple learning for the policy.
-        optimizer.step()
-        optimizer.zero_grad()
-        print("Epoch", epoch, "–– Avg Loss:",avg_loss, "–– Norm:", norm)
-        if predict_spatio:
-            print("Act Loss:", action_loss.data[0], "–– Val Loss:", value_loss.data[0], "\nEntropy",entropy.data[0], "–– Spatio Loss:", spatio_loss.data[0])
-            seq = [runner.T, runner.avg_reward, avg_loss, norm, action_loss.data[0], value_loss.data[0], entropy.data[0], spatio_loss.data[0]]
-        else:
-            print("Act Loss:", action_loss.data[0], "–– Val Loss:", value_loss.data[0], "\nEntropy",entropy.data[0])
-            seq = [runner.T, runner.avg_reward, avg_loss, norm, action_loss.data[0], value_loss.data[0], entropy.data[0]]
+    print("Epoch", epoch, "–– Avg Loss:", avg_loss)
+    if predict_spatio:
+        print("Act Loss:", action_loss, "–– Val Loss:", value_loss, "\nEntropy",entropy, "–– Spatio Loss:", spatio_loss)
+        seq = [runner.T, runner.avg_reward, avg_loss, action_loss, value_loss, entropy, spatio_loss]
+    else:
+        print("Act Loss:", action_loss, "–– Val Loss:", value_loss, "\nEntropy",entropy)
+        seq = [runner.T, runner.avg_reward, avg_loss, action_loss, value_loss, entropy]
 
-        logger.write(",".join([str(x) for x in seq]))
-        logger.write("\n")
-        logger.flush()
-        torch.save(net.state_dict(), net_save_file)
-        torch.save(optimizer.state_dict(), optim_save_file)
+    logger.write(",".join([str(x) for x in seq]))
+    logger.write("\n")
+    logger.flush()
+    torch.save(net.state_dict(), net_save_file)
+    torch.save(optimizer.state_dict(), optim_save_file)
 
-        # Check for memory leaks
-        gc.collect()
-        max_mem_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        print("Memory Used: {:.2f} MB".format(max_mem_used / 1024))
+    # Check for memory leaks
+    gc.collect()
+    max_mem_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    print("Memory Used: {:.2f} MB".format(max_mem_used / 1024))
 
     net.train(mode=False)
 

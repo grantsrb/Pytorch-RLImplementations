@@ -11,8 +11,11 @@ A simple model based loosely off of Andrej Karpathy's model in his reinforcement
 """
 
 class Model(nn.Module):
-    def __init__(self, input_dim, action_dim):
+    def __init__(self, input_dim, action_dim, batch_norm=False):
         super(Model, self).__init__()
+        self.obs_space = input_dim
+        self.act_space = action_dim
+        self.bnorm = batch_norm
         self.hidden_dim = action_dim*100
 
         self.entry = nn.Linear(input_dim, self.hidden_dim)
@@ -24,13 +27,15 @@ class Model(nn.Module):
         self.value_out = nn.Linear(self.hidden_dim, 1)
 
         self.dropout = nn.Dropout(.2)
+        self.logsoftmax = nn.LogSoftmax()
+        self.softmax = nn.Softmax()
 
-    def forward(self, x, requires_value=True, dropout=False, bnorm=False):
+    def forward(self, x, requires_value=True, dropout=False):
         fx = F.relu(self.entry(x))
-        if bnorm: fx = self.bnorm1(fx)
+        if self.bnorm: fx = self.bnorm1(fx)
         if dropout: fx = self.dropout(fx)
         fx = F.relu(self.hidden(fx))
-        if bnorm: fx = self.bnorm2(fx)
+        if self.bnorm: fx = self.bnorm2(fx)
         action = self.action_out(fx)
         if requires_value:
             value = self.value_out(fx)
@@ -45,24 +50,3 @@ class Model(nn.Module):
         for param in list(self.parameters()):
             if torch.sum(param.data != param.data) > 0:
                 print(param)
-
-    def add_model_gradients(self, model2):
-        """
-        Adds each of model2's parameters' gradients to the corresponding gradients of this model
-        """
-        params = list(self.parameters())
-        for i,p in enumerate(model2.parameters()):
-            if type(p.grad) != type(None):
-                if type(params[i].grad) != type(None):
-                    params[i].grad = params[i].grad + p.grad
-                else:
-                    params[i].grad = p.grad
-
-    def swap_weights(self, file1, file2):
-        """
-        Saves current state dict to file1 and loads state dict from file2
-        """
-        assert os.path.isfile(file2) == True
-        torch.save(self.state_dict(), file1)
-        self.load_state_dict(torch.load(file2))
-
